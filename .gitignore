@@ -10,6 +10,7 @@ __pycache__/
 
 # Data storage to exclude
 osfstorage-archive/
+ASR/task1 - NR
 
 
 # Distribution / packaging

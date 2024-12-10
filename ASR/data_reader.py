@@ -61,6 +61,8 @@ def load_all_eeg_data(base_dir):
                                 'file_name': file_name,
                                 'subject': subject,
                                 'task': task,
+                                'file_path': file_path  # Add this line for saving the file paths
+                                # this is done so that one file can be preprocessed at a time
                             }
                             all_eeg_data.append(data_entry)
                         else:

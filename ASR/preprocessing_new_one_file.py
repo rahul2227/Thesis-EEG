@@ -12,39 +12,20 @@ import torch
 device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
 print("Using device:", device)
 
-# Directories
+# Base directories
 base_dir_task_1 = '/Users/rahul/PycharmProjects/Thesis-EEG/osfstorage-archive/task1 - NR'
-base_dir_of_code = '/Users/rahul/PycharmProjects/Thesis-EEG/ASR'  # Directory where this script resides
+base_dir_of_code = '/Users/rahul/PycharmProjects/Thesis-EEG/ASR'  # Where this script/code resides
 
-# Load all EEG data (for task 1)
-all_eeg_data_task_1 = load_all_eeg_data(base_dir_task_1)
-print(f"Total number of EEG files loaded: {len(all_eeg_data_task_1)}")
-
-for idx, data_entry in enumerate(all_eeg_data_task_1):
-    print(f"Processing file {idx + 1}/{len(all_eeg_data_task_1)}: {data_entry['file_name']}")
-
-    eeg_signals = data_entry['eeg_signals']
-    s_rate = data_entry['sampling_rate']
-    subject = data_entry['subject']
-    task = data_entry['task']
-    file_path = data_entry['file_path']  # The original .mat file path
-
-    # Create MNE Raw object
-    n_channels, n_samples = eeg_signals.shape
-    ch_names = [f'E{i + 1}' for i in range(n_channels)]
-    ch_types = ['eeg'] * n_channels
-    info = mne.create_info(ch_names=ch_names, sfreq=s_rate, ch_types=ch_types)
-    raw = mne.io.RawArray(eeg_signals, info)
-
-    # Load the GSN-HydroCel-128 montage
+def preprocess_data(raw, montage_name='GSN-HydroCel-128'):
+    """Apply montage, set reference, and run PREP pipeline on the raw data."""
     try:
-        montage = mne.channels.make_standard_montage('GSN-HydroCel-128')
+        montage = mne.channels.make_standard_montage(montage_name)
         raw.set_montage(montage, on_missing='ignore')
     except Exception as e:
-        print(f"Could not set GSN-HydroCel-128 montage: {e}")
+        print(f"Could not set {montage_name} montage: {e}")
         montage = None
 
-    # Set the EEG reference
+    # Set EEG reference
     try:
         raw = raw.set_eeg_reference(['Cz'])
     except ValueError:
@@ -63,52 +44,89 @@ for idx, data_entry in enumerate(all_eeg_data_task_1):
         }
     }
 
-    # Run the PREP pipeline
-    try:
-        prep = PrepPipeline(raw, prep_params, montage=montage)
-        prep.fit()
-        raw_clean = prep.raw
-        print(f"Preprocessing completed for {data_entry['file_name']}")
+    # Run PREP pipeline
+    prep = PrepPipeline(raw, prep_params, montage=montage)
+    prep.fit()
+    raw_clean = prep.raw
+    return raw_clean
 
-        # Construct output path
-        split_path = file_path.split('osfstorage-archive/')
-        if len(split_path) < 2:
-            print("Unexpected file path structure:", file_path)
-            continue
+def visualize_data(raw_clean, output_dir, base_filename, num_channels_to_plot=5, duration=5):
+    """Create and save various EEG data visualizations."""
+    # Ensure directory exists
+    os.makedirs(output_dir, exist_ok=True)
 
-        # Example: "task1 - NR/Raw data/YAC/YAC_NR1_EEG.mat"
-        relative_path_from_task = split_path[1]
+    # Time-domain plot of the first few EEG channels
+    picks = raw_clean.copy().pick('eeg').ch_names[:num_channels_to_plot]
+    fig_time = raw_clean.plot(start=0, duration=duration, picks=picks, title='Preprocessed EEG (Time-Domain)', show=False)
+    fig_time_file = os.path.join(output_dir, f"{base_filename}_time.png")
+    fig_time.savefig(fig_time_file)
+    plt.close(fig_time)
+    print(f"Time-domain visualization saved to {fig_time_file}")
 
-        # Replace "Raw data" with "Preprocessed data"
-        relative_path_from_task = relative_path_from_task.replace('Raw data', 'Preprocessed data')
+    # PSD plot
+    fig_psd = raw_clean.plot_psd(fmax=50, show=False)
+    fig_psd_file = os.path.join(output_dir, f"{base_filename}_psd.png")
+    fig_psd.savefig(fig_psd_file)
+    plt.close(fig_psd)
+    print(f"PSD visualization saved to {fig_psd_file}")
 
-        # Change extension from .mat to .fif
-        relative_path_from_task = os.path.splitext(relative_path_from_task)[0] + '.fif'
+    # Sensor layout plot (topomap of electrode positions)
+    fig_sensors = raw_clean.plot_sensors(show=False, kind='topomap')
+    fig_sensors_file = os.path.join(output_dir, f"{base_filename}_sensors.png")
+    fig_sensors.savefig(fig_sensors_file)
+    plt.close(fig_sensors)
+    print(f"Sensor layout visualization saved to {fig_sensors_file}")
 
-        # Construct full output path in the code directory structure
-        output_full_path = os.path.join(base_dir_of_code, relative_path_from_task)
+def preprocess_and_save_single_file(data_entry, base_dir_code):
+    """Preprocess a single EEG file and save the preprocessed data and visualizations."""
+    eeg_signals = data_entry['eeg_signals']
+    s_rate = data_entry['sampling_rate']
+    file_path = data_entry['file_path']  # The original .mat file path
+    file_name = data_entry['file_name']
 
-        # Ensure directories exist
-        os.makedirs(os.path.dirname(output_full_path), exist_ok=True)
+    # Create MNE Raw object
+    n_channels, n_samples = eeg_signals.shape
+    ch_names = [f'E{i+1}' for i in range(n_channels)]
+    ch_types = ['eeg'] * n_channels
+    info = mne.create_info(ch_names=ch_names, sfreq=s_rate, ch_types=ch_types)
+    raw = mne.io.RawArray(eeg_signals, info)
 
-        # Save the preprocessed data
-        raw_clean.save(output_full_path, overwrite=True)
-        print(f"Saved preprocessed data to {output_full_path}")
+    # Preprocess data
+    raw_clean = preprocess_data(raw, montage_name='GSN-HydroCel-128')
+    print(f"Preprocessing completed for {file_name}")
 
-        # Create and save visualization
-        # We'll plot the first 5 EEG channels for the first 5 seconds
-        picks = raw_clean.copy().pick('eeg').ch_names[:5]
-        tmin = 0
-        tmax = 5
-        fig = raw_clean.plot(start=tmin, duration=tmax, picks=picks, title='Preprocessed EEG Data', show=False)
+    # Construct output path
+    # Input example:
+    # /Users/rahul/PycharmProjects/Thesis-EEG/osfstorage-archive/task1 - NR/Raw data/YAC/YAC_NR1_EEG.mat
+    # Output:
+    # /Users/rahul/PycharmProjects/Thesis-EEG/ASR/task1 - NR/Preprocessed data/YAC/YAC_NR1_EEG.fif
+    split_path = file_path.split('osfstorage-archive/')
+    if len(split_path) < 2:
+        print("Unexpected file path structure:", file_path)
+        return
 
-        # Construct visualization file path (replace .fif with .png)
-        vis_file_path = output_full_path.replace('.fif', '.png')
-        fig.savefig(vis_file_path)
-        print(f"Visualization saved to {vis_file_path}")
+    relative_path_from_task = split_path[1].replace('Raw data', 'Preprocessed data')
+    relative_path_from_task = os.path.splitext(relative_path_from_task)[0] + '.fif'
+    output_full_path = os.path.join(base_dir_code, relative_path_from_task)
 
-        plt.close(fig)  # Close figure to prevent memory leaks
+    # Save preprocessed data
+    os.makedirs(os.path.dirname(output_full_path), exist_ok=True)
+    raw_clean.save(output_full_path, overwrite=True)
+    print(f"Saved preprocessed data to {output_full_path}")
 
-    except Exception as e:
-        print(f"Error during preprocessing {data_entry['file_name']}: {e}")
-        continue
+    # Visualization
+    # Base filename for visualization (without extension)
+    base_filename = os.path.splitext(os.path.basename(output_full_path))[0]
+    visualize_data(raw_clean, os.path.dirname(output_full_path), base_filename, num_channels_to_plot=5, duration=5)
+
+# Main script
+if __name__ == "__main__":
+    all_eeg_data_task_1 = load_all_eeg_data(base_dir_task_1)
+    print(f"Total number of EEG files loaded: {len(all_eeg_data_task_1)}")
+
+    for idx, data_entry in enumerate(all_eeg_data_task_1):
+        print(f"Processing file {idx+1}/{len(all_eeg_data_task_1)}: {data_entry['file_name']}")
+        try:
+            preprocess_and_save_single_file(data_entry, base_dir_of_code)
+        except Exception as e:
+            print(f"Error during preprocessing {data_entry['file_name']}: {e}")

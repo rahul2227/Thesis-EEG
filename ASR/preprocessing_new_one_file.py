@@ -1,11 +1,10 @@
-# main.py
+# Preprocessing.py
 
 import os
 import numpy as np
 import mne
 from pyprep.prep_pipeline import PrepPipeline
 from data_reader import load_all_eeg_data
-import matplotlib.pyplot as plt
 import torch
 
 # If you intend to use GPU acceleration via PyTorch (optional)
@@ -27,10 +26,10 @@ def preprocess_data(raw, montage_name='GSN-HydroCel-128'):
 
     # Set EEG reference
     try:
-        raw = raw.set_eeg_reference(['Cz'])
+        raw.set_eeg_reference(['Cz'])
     except ValueError:
         print("Cz not found in channel names. Using average reference instead.")
-        raw = raw.set_eeg_reference('average')
+        raw.set_eeg_reference('average')
 
     # PREP pipeline parameters
     prep_params = {
@@ -44,44 +43,17 @@ def preprocess_data(raw, montage_name='GSN-HydroCel-128'):
         }
     }
 
-    # Run PREP pipeline
+    # Run the PREP pipeline
     prep = PrepPipeline(raw, prep_params, montage=montage)
     prep.fit()
     raw_clean = prep.raw
     return raw_clean
 
-def visualize_data(raw_clean, output_dir, base_filename, num_channels_to_plot=5, duration=5):
-    """Create and save various EEG data visualizations."""
-    # Ensure directory exists
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Time-domain plot of the first few EEG channels
-    picks = raw_clean.copy().pick('eeg').ch_names[:num_channels_to_plot]
-    fig_time = raw_clean.plot(start=0, duration=duration, picks=picks, title='Preprocessed EEG (Time-Domain)', show=False)
-    fig_time_file = os.path.join(output_dir, f"{base_filename}_time.png")
-    fig_time.savefig(fig_time_file)
-    plt.close(fig_time)
-    print(f"Time-domain visualization saved to {fig_time_file}")
-
-    # PSD plot
-    fig_psd = raw_clean.plot_psd(fmax=50, show=False)
-    fig_psd_file = os.path.join(output_dir, f"{base_filename}_psd.png")
-    fig_psd.savefig(fig_psd_file)
-    plt.close(fig_psd)
-    print(f"PSD visualization saved to {fig_psd_file}")
-
-    # Sensor layout plot (topomap of electrode positions)
-    fig_sensors = raw_clean.plot_sensors(show=False, kind='topomap')
-    fig_sensors_file = os.path.join(output_dir, f"{base_filename}_sensors.png")
-    fig_sensors.savefig(fig_sensors_file)
-    plt.close(fig_sensors)
-    print(f"Sensor layout visualization saved to {fig_sensors_file}")
-
 def preprocess_and_save_single_file(data_entry, base_dir_code):
-    """Preprocess a single EEG file and save the preprocessed data and visualizations."""
+    """Preprocess a single EEG file and save the preprocessed data."""
     eeg_signals = data_entry['eeg_signals']
     s_rate = data_entry['sampling_rate']
-    file_path = data_entry['file_path']  # The original .mat file path
+    file_path = data_entry['file_path']
     file_name = data_entry['file_name']
 
     # Create MNE Raw object
@@ -96,37 +68,36 @@ def preprocess_and_save_single_file(data_entry, base_dir_code):
     print(f"Preprocessing completed for {file_name}")
 
     # Construct output path
-    # Input example:
-    # /Users/rahul/PycharmProjects/Thesis-EEG/osfstorage-archive/task1 - NR/Raw data/YAC/YAC_NR1_EEG.mat
-    # Output:
-    # /Users/rahul/PycharmProjects/Thesis-EEG/ASR/task1 - NR/Preprocessed data/YAC/YAC_NR1_EEG.fif
     split_path = file_path.split('osfstorage-archive/')
     if len(split_path) < 2:
         print("Unexpected file path structure:", file_path)
+        # Free memory before return
+        del raw_clean, raw, eeg_signals
         return
 
     relative_path_from_task = split_path[1].replace('Raw data', 'Preprocessed data')
     relative_path_from_task = os.path.splitext(relative_path_from_task)[0] + '.fif'
     output_full_path = os.path.join(base_dir_code, relative_path_from_task)
 
-    # Save preprocessed data
+    # Ensure output directory exists
     os.makedirs(os.path.dirname(output_full_path), exist_ok=True)
+
+    # Save preprocessed data directly to disk
     raw_clean.save(output_full_path, overwrite=True)
     print(f"Saved preprocessed data to {output_full_path}")
 
-    # Visualization
-    # Base filename for visualization (without extension)
-    base_filename = os.path.splitext(os.path.basename(output_full_path))[0]
-    visualize_data(raw_clean, os.path.dirname(output_full_path), base_filename, num_channels_to_plot=5, duration=5)
+    # Free memory by deleting large variables
+    del raw_clean, raw, eeg_signals
 
 # Main script
 if __name__ == "__main__":
-    all_eeg_data_task_1 = load_all_eeg_data(base_dir_task_1)
-    print(f"Total number of EEG files loaded: {len(all_eeg_data_task_1)}")
-
-    for idx, data_entry in enumerate(all_eeg_data_task_1):
-        print(f"Processing file {idx+1}/{len(all_eeg_data_task_1)}: {data_entry['file_name']}")
+    # Process files one by one as they are yielded by load_all_eeg_data
+    for idx, data_entry in enumerate(load_all_eeg_data(base_dir_task_1), start=1):
+        print(f"Processing file {idx}: {data_entry['file_name']}")
         try:
             preprocess_and_save_single_file(data_entry, base_dir_of_code)
         except Exception as e:
             print(f"Error during preprocessing {data_entry['file_name']}: {e}")
+        finally:
+            # Delete data_entry to free memory
+            del data_entry

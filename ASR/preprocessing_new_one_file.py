@@ -12,7 +12,8 @@ device = torch.device("mps") if torch.backends.mps.is_available() else torch.dev
 print("Using device:", device)
 
 # Base directories
-base_dir_task_1 = '/Users/rahul/PycharmProjects/Thesis-EEG/osfstorage-archive/task1 - NR'
+# base_dir_task_1 = '/Users/rahul/PycharmProjects/Thesis-EEG/osfstorage-archive/task1 - NR'
+base_dir_task_2 = '/Users/rahul/PycharmProjects/Thesis-EEG/osfstorage-archive/task2 - TSR'
 base_dir_of_code = '/Users/rahul/PycharmProjects/Thesis-EEG/ASR'  # Where this script/code resides
 
 def preprocess_data(raw, montage_name='GSN-HydroCel-128'):
@@ -92,7 +93,7 @@ def preprocess_and_save_single_file(data_entry, base_dir_code):
 # Main script
 if __name__ == "__main__":
     # Process files one by one as they are yielded by load_all_eeg_data
-    for idx, data_entry in enumerate(load_all_eeg_data(base_dir_task_1), start=1):
+    for idx, data_entry in enumerate(load_all_eeg_data(base_dir_task_2), start=1):
         print(f"Processing file {idx}: {data_entry['file_name']}")
         try:
             preprocess_and_save_single_file(data_entry, base_dir_of_code)

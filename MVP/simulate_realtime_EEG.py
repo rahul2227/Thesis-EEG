@@ -85,7 +85,7 @@ def main():
         eeg_data=eeg_signals,
         sampling_rate=sampling_rate,
         chunk_size=50,
-        channel_index=0
+        channel_index=25
     )
 
     print(f"Starting real-time simulation for file: {first_data_entry['file_name']}")

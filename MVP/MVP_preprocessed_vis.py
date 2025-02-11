@@ -261,7 +261,7 @@ def main():
         srate=srate,
         model=clf,            # pass your model if you want predictions
         chunk_size=50,
-        channel_index=0       # which channel to visualize
+        channel_index=5       # which channel to visualize
     )
 
     print("\nStarting real-time simulation...\n")

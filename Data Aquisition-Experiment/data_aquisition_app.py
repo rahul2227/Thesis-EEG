@@ -5,6 +5,21 @@ import pygame
 from tkinter import Tk
 from tkinter.filedialog import askopenfilename
 import PyPDF2
+import serial
+import time
+
+# Trigger constants and helper function
+TRIGGER_READING = 0x10
+TRIGGER_THINKING = 0x20
+
+def send_trigger(trigger_port, trigger_code):
+    if trigger_port is not None:
+        try:
+            trigger_port.write([trigger_code])
+            time.sleep(0.01)
+            trigger_port.write([0x00])
+        except Exception as e:
+            print("Error sending trigger:", e)
 
 # -------------------------------
 # 1. File Selection via Tkinter
@@ -32,7 +47,7 @@ def extract_text_from_pdf(pdf_path):
     return text
 
 # ----------------------------------
-# 3. Parsing the Reading Comprehension
+# 3. Parsing the Reading Comprehensions
 # ----------------------------------
 def parse_reading_comprehensions(raw_text):
     """
@@ -179,8 +194,9 @@ def display_text(screen, font, text, start_y=50, color=(0, 0, 0)):
         screen.blit(rendered_line, (50, y))
         y += font.get_linesize() + 5
 
-def reading_comprehension_screen(screen, font, passage, user_name):
+def reading_comprehension_screen(screen, font, passage, user_name, trigger_port):
     next_button_rect = pygame.Rect(350, 500, 100, 50)
+    trigger_sent = False
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -195,19 +211,26 @@ def reading_comprehension_screen(screen, font, passage, user_name):
         display_text(screen, font, passage, start_y=50)
         draw_button(screen, next_button_rect, "Next", font)
         pygame.display.flip()
+        if not trigger_sent:
+            send_trigger(trigger_port, TRIGGER_READING)
+            trigger_sent = True
 
 # -----------------------------------------
 # 4c. Displaying Each Question with Checkboxes
 # -----------------------------------------
-def question_screen(screen, font, question_dict, user_name):
+def question_screen(screen, font, question_dict, user_name, trigger_port):
     submit_button_rect = pygame.Rect(350, 500, 100, 50)
     base_y = 150
     checkbox_size = 20
     spacing_y = 50
     selected_option = None
     options = list(question_dict["options"].items())
+    trigger_sent = False
 
     while True:
+        if not trigger_sent:
+            send_trigger(trigger_port, TRIGGER_THINKING)
+            trigger_sent = True
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
@@ -284,25 +307,33 @@ def main():
     pygame.display.set_caption("Reading Comprehension Quiz")
     font = pygame.font.SysFont("Arial", 24)
 
-    # 4. Ask for the user's name.
+    # 4. Initialize trigger port
+    try:
+        trigger_port = serial.Serial("COM4")  # Adjust COM port if needed
+        trigger_port.write([0x00])
+    except Exception as e:
+        print("Error opening trigger port:", e)
+        trigger_port = None
+
+    # 5. Ask for the user's name.
     user_name = input_name_screen(screen, font)
 
     results = []  # This list will store tuples: (Section #, Question #, Correct, User Answer)
     total_sections = len(sections)
 
-    # 5. Loop through all reading comprehension sections.
+    # 6. Loop through all reading comprehension sections.
     for sec_index, section in enumerate(sections):
-        # Display the reading comprehension passage.
-        reading_comprehension_screen(screen, font, section["paragraph"], user_name)
+        # Display the reading comprehension passage and send trigger for reading.
+        reading_comprehension_screen(screen, font, section["paragraph"], user_name, trigger_port)
         # Loop through all questions in this section.
         for q_index, question in enumerate(section["questions"]):
-            answer = question_screen(screen, font, question, user_name)
-            results.append( (sec_index+1, q_index+1, question["correct"], answer) )
+            answer = question_screen(screen, font, question, user_name, trigger_port)
+            results.append((sec_index+1, q_index+1, question["correct"], answer))
         # If not the last section, show a transition screen.
         if sec_index < total_sections - 1:
             show_section_transition(screen, font, user_name, sec_index+1, total_sections)
 
-    # 6. Display a completion message.
+    # 7. Display a completion message.
     screen.fill((255, 255, 255))
     draw_user_name(screen, font, user_name)
     thanks_text = f"Quiz complete! Thank you, {user_name}."
@@ -311,7 +342,7 @@ def main():
     pygame.display.flip()
     pygame.time.wait(3000)
 
-    # 7. Write results to a CSV file in the same directory as the code.
+    # 8. Write results to a CSV file.
     directory = os.path.dirname(os.path.abspath(__file__))
     csv_filename = os.path.join(directory, f"{user_name}-data.csv")
     try:
@@ -324,6 +355,9 @@ def main():
     except Exception as e:
         print("Error writing CSV file:", e)
 
+    # 9. Close trigger port and quit.
+    if trigger_port is not None:
+        trigger_port.close()
     pygame.quit()
 
 if __name__ == "__main__":

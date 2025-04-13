@@ -7,6 +7,7 @@ from tkinter.filedialog import askopenfilename
 import PyPDF2
 import serial
 import time
+from tobiiEyeTrackerPro import TobiiEyeTracker
 
 # Trigger constants and helper function
 TRIGGER_READING = 0x10

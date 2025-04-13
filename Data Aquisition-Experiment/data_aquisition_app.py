@@ -7,11 +7,13 @@ from tkinter.filedialog import askopenfilename
 import PyPDF2
 import serial
 import time
+import threading
 from tobiiEyeTrackerPro import TobiiEyeTracker
 
 # Trigger constants and helper function
 TRIGGER_READING = 0x10
 TRIGGER_THINKING = 0x20
+tracking_thread_stop = False
 
 def send_trigger(trigger_port, trigger_code):
     if trigger_port is not None:
@@ -22,6 +24,7 @@ def send_trigger(trigger_port, trigger_code):
         except Exception as e:
             print("Error sending trigger:", e)
 
+
 # -------------------------------
 # 1. File Selection via Tkinter
 # -------------------------------
@@ -30,6 +33,7 @@ def select_pdf_file():
     Tk().withdraw()
     filename = askopenfilename(title="Select PDF file", filetypes=[("PDF files", "*.pdf")])
     return filename
+
 
 # ------------------------------------
 # 2. PDF Text Extraction with PyPDF2
@@ -46,6 +50,7 @@ def extract_text_from_pdf(pdf_path):
     except Exception as e:
         print("Error reading PDF:", e)
     return text
+
 
 # ----------------------------------
 # 3. Parsing the Reading Comprehensions
@@ -118,6 +123,7 @@ def parse_reading_comprehensions(raw_text):
         sections.append(current_section)
     return sections
 
+
 # -----------------------------------------
 # Helper functions for drawing UI elements
 # -----------------------------------------
@@ -127,12 +133,14 @@ def draw_button(screen, rect, text, font, button_color=(100, 200, 100), text_col
     text_rect = rendered_text.get_rect(center=rect.center)
     screen.blit(rendered_text, text_rect)
 
+
 def draw_user_name(screen, font, user_name):
     """ Draws the user's name at the top right corner. """
     if user_name:
         name_surface = font.render(user_name, True, (0, 0, 0))
         x_pos = screen.get_width() - name_surface.get_width() - 10
         screen.blit(name_surface, (x_pos, 10))
+
 
 # -----------------------------------------
 # 4a. User Name Input Screen (After PDF selection)
@@ -170,6 +178,7 @@ def input_name_screen(screen, font):
         draw_button(screen, next_button_rect, "Next", font)
         pygame.display.flip()
 
+
 # -----------------------------------------
 # 4b. Displaying the Reading Comprehension Passage
 # -----------------------------------------
@@ -195,6 +204,7 @@ def display_text(screen, font, text, start_y=50, color=(0, 0, 0)):
         screen.blit(rendered_line, (50, y))
         y += font.get_linesize() + 5
 
+
 def reading_comprehension_screen(screen, font, passage, user_name, trigger_port):
     next_button_rect = pygame.Rect(350, 500, 100, 50)
     trigger_sent = False
@@ -215,6 +225,7 @@ def reading_comprehension_screen(screen, font, passage, user_name, trigger_port)
         if not trigger_sent:
             send_trigger(trigger_port, TRIGGER_READING)
             trigger_sent = True
+
 
 # -----------------------------------------
 # 4c. Displaying Each Question with Checkboxes
@@ -260,12 +271,13 @@ def question_screen(screen, font, question_dict, user_name, trigger_port):
         draw_button(screen, submit_button_rect, "Submit", font)
         pygame.display.flip()
 
+
 # -----------------------------------------
 # 4d. Transition Screen Between Sections
 # -----------------------------------------
 def show_section_transition(screen, font, user_name, current_section, total_sections):
     next_button_rect = pygame.Rect(350, 500, 100, 50)
-    message = f"Section {current_section} complete. Click Next for Section {current_section+1} of {total_sections}."
+    message = f"Section {current_section} complete. Click Next for Section {current_section + 1} of {total_sections}."
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -280,6 +292,18 @@ def show_section_transition(screen, font, user_name, current_section, total_sect
         screen.blit(msg_surface, (50, 300))
         draw_button(screen, next_button_rect, "Next", font)
         pygame.display.flip()
+
+def start_tracking(eye_tracker):
+    eye_tracker.start_recording()
+    interval = 1  # seconds
+    while not tracking_thread_stop:
+        time.sleep(interval)
+        mean_pupil_area = eye_tracker.get_mean_pupil_area(interval)
+        mean_fixation_duration = eye_tracker.get_mean_fixation_duration(interval)
+        user_looking = eye_tracker.is_user_looking(interval)
+        avg_x, avg_y = eye_tracker.get_average_gaze_point(interval)
+        eye_tracker.cleanup_old_data(interval)
+        return mean_pupil_area, mean_fixation_duration, user_looking, avg_x, avg_y
 
 # ----------------------------
 # Main application loop
@@ -302,13 +326,23 @@ def main():
         print("No reading comprehension sections found.")
         return
 
-    # 3. Now initialize Pygame.
+    # 3. Start the eye-tracker
+    eye_tracker = TobiiEyeTracker()
+    eye_tracker.connect()
+    eye_tracker.start_recording()
+    # Start the eye-tracking in a separate thread
+    tracking_thread = threading.Thread(target=start_tracking(eye_tracker), daemon=True)
+    tracking_thread.start()
+
+
+
+    # 4. Now initialize Pygame.
     pygame.init()
     screen = pygame.display.set_mode((800, 600))
     pygame.display.set_caption("Reading Comprehension Quiz")
     font = pygame.font.SysFont("Arial", 24)
 
-    # 4. Initialize trigger port
+    # 5. Initialize trigger port
     try:
         trigger_port = serial.Serial("COM4")  # Adjust COM port if needed
         trigger_port.write([0x00])
@@ -316,25 +350,25 @@ def main():
         print("Error opening trigger port:", e)
         trigger_port = None
 
-    # 5. Ask for the user's name.
+    # 6. Ask for the user's name.
     user_name = input_name_screen(screen, font)
 
     results = []  # This list will store tuples: (Section #, Question #, Correct, User Answer)
     total_sections = len(sections)
 
-    # 6. Loop through all reading comprehension sections.
+    # 7. Loop through all reading comprehension sections.
     for sec_index, section in enumerate(sections):
         # Display the reading comprehension passage and send trigger for reading.
         reading_comprehension_screen(screen, font, section["paragraph"], user_name, trigger_port)
         # Loop through all questions in this section.
         for q_index, question in enumerate(section["questions"]):
             answer = question_screen(screen, font, question, user_name, trigger_port)
-            results.append((sec_index+1, q_index+1, question["correct"], answer))
+            results.append((sec_index + 1, q_index + 1, question["correct"], answer))
         # If not the last section, show a transition screen.
         if sec_index < total_sections - 1:
-            show_section_transition(screen, font, user_name, sec_index+1, total_sections)
+            show_section_transition(screen, font, user_name, sec_index + 1, total_sections)
 
-    # 7. Display a completion message.
+    # 8. Display a completion message.
     screen.fill((255, 255, 255))
     draw_user_name(screen, font, user_name)
     thanks_text = f"Quiz complete! Thank you, {user_name}."
@@ -343,7 +377,7 @@ def main():
     pygame.display.flip()
     pygame.time.wait(3000)
 
-    # 8. Write results to a CSV file.
+    # 9. Write results to a CSV file.
     directory = os.path.dirname(os.path.abspath(__file__))
     csv_filename = os.path.join(directory, f"{user_name}-data.csv")
     try:
@@ -356,10 +390,11 @@ def main():
     except Exception as e:
         print("Error writing CSV file:", e)
 
-    # 9. Close trigger port and quit.
+    # 10. Close trigger port and quit.
     if trigger_port is not None:
         trigger_port.close()
     pygame.quit()
+
 
 if __name__ == "__main__":
     main()

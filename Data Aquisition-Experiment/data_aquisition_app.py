@@ -13,7 +13,7 @@ from tobiiEyeTrackerPro import TobiiEyeTracker
 # Trigger constants and helper function
 TRIGGER_READING = 0x10
 TRIGGER_THINKING = 0x20
-tracking_thread_stop = False
+TRACKING_THREAD = False
 
 def send_trigger(trigger_port, trigger_code):
     if trigger_port is not None:
@@ -293,17 +293,34 @@ def show_section_transition(screen, font, user_name, current_section, total_sect
         draw_button(screen, next_button_rect, "Next", font)
         pygame.display.flip()
 
-def start_tracking(eye_tracker):
+def start_tracking():
+    eye_tracker = TobiiEyeTracker()
+    eye_tracker.connect()
     eye_tracker.start_recording()
     interval = 1  # seconds
-    while not tracking_thread_stop:
-        time.sleep(interval)
-        mean_pupil_area = eye_tracker.get_mean_pupil_area(interval)
-        mean_fixation_duration = eye_tracker.get_mean_fixation_duration(interval)
-        user_looking = eye_tracker.is_user_looking(interval)
-        avg_x, avg_y = eye_tracker.get_average_gaze_point(interval)
-        eye_tracker.cleanup_old_data(interval)
-        return mean_pupil_area, mean_fixation_duration, user_looking, avg_x, avg_y
+
+    # Open CSV file and write headers
+    with open('eye_tracking_data.csv', mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(['Timestamp', 'Mean Pupil Area', 'Mean Fixation Duration', 'User Looking', 'Avg X', 'Avg Y'])
+
+        while not TRACKING_THREAD:
+            time.sleep(interval)
+            mean_pupil_area = eye_tracker.get_mean_pupil_area(interval)
+            mean_fixation_duration = eye_tracker.get_mean_fixation_duration(interval)
+            user_looking = eye_tracker.is_user_looking(interval)
+            avg_x, avg_y = eye_tracker.get_average_gaze_point(interval)
+            eye_tracker.cleanup_old_data(interval)
+
+            # Write a row of data with a timestamp
+            writer.writerow([
+                time.strftime('%Y-%m-%d %H:%M:%S'),
+                mean_pupil_area,
+                mean_fixation_duration,
+                user_looking,
+                avg_x,
+                avg_y
+            ])
 
 # ----------------------------
 # Main application loop
@@ -327,11 +344,8 @@ def main():
         return
 
     # 3. Start the eye-tracker
-    eye_tracker = TobiiEyeTracker()
-    eye_tracker.connect()
-    eye_tracker.start_recording()
     # Start the eye-tracking in a separate thread
-    tracking_thread = threading.Thread(target=start_tracking(eye_tracker), daemon=True)
+    tracking_thread = threading.Thread(target=start_tracking, daemon=True)
     tracking_thread.start()
 
 
@@ -394,6 +408,7 @@ def main():
     if trigger_port is not None:
         trigger_port.close()
     pygame.quit()
+    TRACKING_THREAD = True
 
 
 if __name__ == "__main__":

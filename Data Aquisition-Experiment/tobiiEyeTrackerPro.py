@@ -24,6 +24,7 @@ class TobiiEyeTracker:
         self.PUPILE_CONVERSION = 10
         self.recording = False
 
+    # TODO:  Write a flag to return when I tracker is found, if not found then return false
     def connect(self):
         while True:
             print("[Log] Searching for eye tracker...")

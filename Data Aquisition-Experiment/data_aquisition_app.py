@@ -15,6 +15,9 @@ TRIGGER_READING = 0x10
 TRIGGER_THINKING = 0x20
 TRACKING_THREAD = False
 
+# TODO: make it so that anyplace and anytime you press Q the app exits.
+# TODO: Adjust the experiment to auto calculate the interface position to display everything in center
+
 def send_trigger(trigger_port, trigger_code):
     if trigger_port is not None:
         try:
@@ -201,12 +204,13 @@ def display_text(screen, font, text, start_y=50, color=(0, 0, 0)):
     y = start_y
     for line in lines:
         rendered_line = font.render(line, True, color)
-        screen.blit(rendered_line, (50, y))
+        x = (screen.get_width() - rendered_line.get_width()) // 2
+        screen.blit(rendered_line, (x, y))
         y += font.get_linesize() + 5
 
 
 def reading_comprehension_screen(screen, font, passage, user_name, trigger_port):
-    next_button_rect = pygame.Rect(350, 500, 100, 50)
+    next_button_rect = pygame.Rect((screen.get_width()-100)//2, 500, 100, 50)
     trigger_sent = False
     while True:
         for event in pygame.event.get():
@@ -231,43 +235,81 @@ def reading_comprehension_screen(screen, font, passage, user_name, trigger_port)
 # 4c. Displaying Each Question with Checkboxes
 # -----------------------------------------
 def question_screen(screen, font, question_dict, user_name, trigger_port):
-    submit_button_rect = pygame.Rect(350, 500, 100, 50)
-    base_y = 150
     checkbox_size = 20
     spacing_y = 50
-    selected_option = None
     options = list(question_dict["options"].items())
+
+    # Render the question text once to get its height
+    question_surface = font.render(question_dict["question"], True, (0, 0, 0))
+    question_height = question_surface.get_height()
+
+    # Calculate total height for options block
+    options_height = len(options) * spacing_y
+
+    # Define additional gaps and submit button height
+    gap1 = 20  # gap between question and options
+    gap2 = 20  # gap between options and submit button
+    submit_button_height = 50  # height of the submit button
+
+    # Total height of the entire questions view block
+    total_height = question_height + gap1 + options_height + gap2 + submit_button_height
+
+    # Calculate the starting y-position to vertically center the block
+    start_y = (screen.get_height() - total_height) // 2
+
+    # Set the y-position for the submit button
+    submit_y = start_y + question_height + gap1 + options_height + gap2
+    submit_button_rect = pygame.Rect((screen.get_width() - 100) // 2, submit_y, 100, 50)
+
     trigger_sent = False
+    selected_option = None
 
     while True:
-        if not trigger_sent:
-            send_trigger(trigger_port, TRIGGER_THINKING)
-            trigger_sent = True
         for event in pygame.event.get():
-            if event.type == pygame.QUIT:
+            # Exit the app if Q is pressed or window is closed.
+            if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_q):
                 pygame.quit()
                 sys.exit()
+
             if event.type == pygame.MOUSEBUTTONDOWN:
                 mouse_pos = event.pos
+                # Check each option's checkbox collision
                 for idx, (letter, option_text) in enumerate(options):
-                    cb_rect = pygame.Rect(100, base_y + idx * spacing_y, checkbox_size, checkbox_size)
+                    opt_surface = font.render(f"{letter}: {option_text}", True, (0, 0, 0))
+                    row_width = checkbox_size + 10 + opt_surface.get_width()
+                    row_x = (screen.get_width() - row_width) // 2
+                    option_y = start_y + question_height + gap1 + idx * spacing_y
+                    cb_rect = pygame.Rect(row_x, option_y, checkbox_size, checkbox_size)
                     if cb_rect.collidepoint(mouse_pos):
                         selected_option = letter
                 if submit_button_rect.collidepoint(mouse_pos) and selected_option is not None:
                     return selected_option
 
+        if not trigger_sent:
+            send_trigger(trigger_port, TRIGGER_THINKING)
+            trigger_sent = True
+
         screen.fill((255, 255, 255))
         draw_user_name(screen, font, user_name)
+
+        # Render and center the question text
         question_surface = font.render(question_dict["question"], True, (0, 0, 0))
-        screen.blit(question_surface, (50, 50))
+        q_x = (screen.get_width() - question_surface.get_width()) // 2
+        screen.blit(question_surface, (q_x, start_y))
+
+        # Render each option, centering each row horizontally
         for idx, (letter, option_text) in enumerate(options):
-            cb_rect = pygame.Rect(100, base_y + idx * spacing_y, checkbox_size, checkbox_size)
+            opt_surface = font.render(f"{letter}: {option_text}", True, (0, 0, 0))
+            row_width = checkbox_size + 10 + opt_surface.get_width()
+            row_x = (screen.get_width() - row_width) // 2
+            option_y = start_y + question_height + gap1 + idx * spacing_y
+            cb_rect = pygame.Rect(row_x, option_y, checkbox_size, checkbox_size)
             pygame.draw.rect(screen, (0, 0, 0), cb_rect, 2)
             if selected_option == letter:
                 pygame.draw.line(screen, (0, 0, 0), (cb_rect.left, cb_rect.top), (cb_rect.right, cb_rect.bottom), 2)
                 pygame.draw.line(screen, (0, 0, 0), (cb_rect.left, cb_rect.bottom), (cb_rect.right, cb_rect.top), 2)
-            opt_surface = font.render(f"{letter}: {option_text}", True, (0, 0, 0))
             screen.blit(opt_surface, (cb_rect.right + 10, cb_rect.top))
+
         draw_button(screen, submit_button_rect, "Submit", font)
         pygame.display.flip()
 
@@ -276,7 +318,7 @@ def question_screen(screen, font, question_dict, user_name, trigger_port):
 # 4d. Transition Screen Between Sections
 # -----------------------------------------
 def show_section_transition(screen, font, user_name, current_section, total_sections):
-    next_button_rect = pygame.Rect(350, 500, 100, 50)
+    next_button_rect = pygame.Rect((screen.get_width()-100)//2, 500, 100, 50)
     message = f"Section {current_section} complete. Click Next for Section {current_section + 1} of {total_sections}."
     while True:
         for event in pygame.event.get():
@@ -289,13 +331,15 @@ def show_section_transition(screen, font, user_name, current_section, total_sect
         screen.fill((255, 255, 255))
         draw_user_name(screen, font, user_name)
         msg_surface = font.render(message, True, (0, 0, 0))
-        screen.blit(msg_surface, (50, 300))
+        x_msg = (screen.get_width() - msg_surface.get_width()) // 2
+        screen.blit(msg_surface, (x_msg, 300))
         draw_button(screen, next_button_rect, "Next", font)
         pygame.display.flip()
 
+
 def start_tracking():
     eye_tracker = TobiiEyeTracker()
-    eye_tracker.connect()
+    eye_tracker.connect()  # TODO: make it so if you get False (meaning eyetracker is not there), exit the app
     eye_tracker.start_recording()
     interval = 1  # seconds
 
@@ -322,6 +366,7 @@ def start_tracking():
                 avg_y
             ])
 
+
 # ----------------------------
 # Main application loop
 # ----------------------------
@@ -343,20 +388,17 @@ def main():
         print("No reading comprehension sections found.")
         return
 
-    # 3. Start the eye-tracker
-    # Start the eye-tracking in a separate thread
+    # 3. Start the eye-tracker in a separate thread.
     tracking_thread = threading.Thread(target=start_tracking, daemon=True)
     tracking_thread.start()
 
-
-
     # 4. Now initialize Pygame.
     pygame.init()
-    screen = pygame.display.set_mode((800, 600))
+    screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
     pygame.display.set_caption("Reading Comprehension Quiz")
     font = pygame.font.SysFont("Arial", 24)
 
-    # 5. Initialize trigger port
+    # 5. Initialize trigger port.
     try:
         trigger_port = serial.Serial("COM4")  # Adjust COM port if needed
         trigger_port.write([0x00])
@@ -387,7 +429,8 @@ def main():
     draw_user_name(screen, font, user_name)
     thanks_text = f"Quiz complete! Thank you, {user_name}."
     thanks_surface = font.render(thanks_text, True, (0, 0, 0))
-    screen.blit(thanks_surface, (200, 300))
+    x_thanks = (screen.get_width() - thanks_surface.get_width()) // 2
+    screen.blit(thanks_surface, (x_thanks, 300))
     pygame.display.flip()
     pygame.time.wait(3000)
 
@@ -408,6 +451,7 @@ def main():
     if trigger_port is not None:
         trigger_port.close()
     pygame.quit()
+    global TRACKING_THREAD
     TRACKING_THREAD = True
 
 

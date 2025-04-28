@@ -33,7 +33,6 @@ TRIGGER_READING = 0x10
 TRIGGER_THINKING = 0x20
 TRACKING_THREAD = False
 
-# TODO: Adjust the experiment to auto calculate the interface position to display everything in center
 
 def send_trigger(trigger_port, trigger_code):
     if trigger_port is not None:
@@ -165,6 +164,31 @@ def draw_user_name(screen, font, user_name):
 # -----------------------------------------
 # 4a. User Name Input Screen (After PDF selection)
 # -----------------------------------------
+def select_mode_screen(screen, font):
+    """
+    Ask user to choose Developer or Experiment mode.
+    Returns True for experiment mode, False for developer mode.
+    """
+    dev_rect = pygame.Rect(100, 300, 200, 60)
+    exp_rect = pygame.Rect(400, 300, 200, 60)
+    while True:
+        for event in pygame.event.get():
+            # Exit the app if Q is pressed or window is closed.
+            if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_q):
+                pygame.quit()
+                sys.exit()
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if dev_rect.collidepoint(event.pos):
+                    return False
+                if exp_rect.collidepoint(event.pos):
+                    return True
+        screen.fill((255,255,255))
+        title = font.render("Select Mode", True, (0,0,0))
+        screen.blit(title, ((screen.get_width()-title.get_width())//2, 200))
+        draw_button(screen, dev_rect, "Developer", font)
+        draw_button(screen, exp_rect, "Experiment", font)
+        pygame.display.flip()
+
 def input_name_screen(screen, font):
     name = ""
     # Center the input box and button on screen
@@ -412,13 +436,21 @@ def show_section_transition(screen, font, user_name, current_section, total_sect
         pygame.display.flip()
 
 
-def start_tracking(save_dir):
+def start_tracking(save_dir, experiment_mode):
     # ensure ET_data subdirectory exists next to user CSV
     et_dir = os.path.join(save_dir, "ET_data")
     os.makedirs(et_dir, exist_ok=True)
     file_path = os.path.join(et_dir, "eye_tracking_data.csv")
     eye_tracker = TobiiEyeTracker()
-    eye_tracker.connect()  # TODO: make it so if you get False (meaning eyetracker is not there), exit the app
+    # Connect once in dev mode (best-effort), loop until success in experiment mode
+    if experiment_mode:
+        while not eye_tracker.connect():
+            time.sleep(1)
+    else:
+        try:
+            eye_tracker.connect()
+        except:
+            pass
     eye_tracker.start_recording()
     interval = 1  # seconds
 
@@ -487,6 +519,27 @@ def main():
         print("Error opening trigger port:", e)
         trigger_port = None
 
+    # Mode selection
+    experiment_mode = select_mode_screen(screen, font)
+
+    if experiment_mode:
+        # wait for eye‐tracker to connect before proceeding
+        waiting = True
+        eye = TobiiEyeTracker()
+        while waiting:
+            if eye.connect():
+                waiting = False
+            else:
+                screen.fill((255,255,255))
+                msg = font.render("Waiting for Eye-Tracker...", True, (0,0,0))
+                x = (screen.get_width()-msg.get_width())//2
+                y = screen.get_height()//2
+                screen.blit(msg, (x,y))
+                pygame.display.flip()
+                time.sleep(1)
+        # brief pause so user sees connection success
+        time.sleep(0.5)
+
     # 6. Ask for the user's name.
     user_name = input_name_screen(screen, font)
 
@@ -494,7 +547,11 @@ def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     user_data_dir = os.path.join(base_dir, "experiment_data", user_name)
     os.makedirs(user_data_dir, exist_ok=True)
-    tracking_thread = threading.Thread(target=start_tracking, args=(user_data_dir,), daemon=True)
+    tracking_thread = threading.Thread(
+        target=start_tracking,
+        args=(user_data_dir, experiment_mode),
+        daemon=True
+    )
     tracking_thread.start()
 
     results = []  # This list will store tuples: (Section #, Question #, Correct, User Answer, Frustration)

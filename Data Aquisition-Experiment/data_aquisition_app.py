@@ -15,7 +15,6 @@ TRIGGER_READING = 0x10
 TRIGGER_THINKING = 0x20
 TRACKING_THREAD = False
 
-# TODO: make it so that anyplace and anytime you press Q the app exits.
 # TODO: Adjust the experiment to auto calculate the interface position to display everything in center
 
 def send_trigger(trigger_port, trigger_code):
@@ -150,8 +149,17 @@ def draw_user_name(screen, font, user_name):
 # -----------------------------------------
 def input_name_screen(screen, font):
     name = ""
-    input_box = pygame.Rect(100, 200, 600, 50)
-    next_button_rect = pygame.Rect(350, 300, 100, 50)
+    # Center the input box and button on screen
+    screen_width = screen.get_width()
+    screen_height = screen.get_height()
+    input_box_width, input_box_height = 600, 50
+    input_box_x = (screen_width - input_box_width) // 2
+    input_box_y = (screen_height - input_box_height) // 2 - 50
+    input_box = pygame.Rect(input_box_x, input_box_y, input_box_width, input_box_height)
+    next_button_width, next_button_height = 100, 50
+    next_button_x = (screen_width - next_button_width) // 2
+    next_button_y = input_box_y + input_box_height + 20
+    next_button_rect = pygame.Rect(next_button_x, next_button_y, next_button_width, next_button_height)
     active = True
 
     while True:
@@ -173,8 +181,11 @@ def input_name_screen(screen, font):
                     return name
 
         screen.fill((255, 255, 255))
+        # Center the prompt above the input box
         prompt_surface = font.render("Enter your name:", True, (0, 0, 0))
-        screen.blit(prompt_surface, (100, 150))
+        prompt_x = (screen_width - prompt_surface.get_width()) // 2
+        prompt_y = input_box_y - prompt_surface.get_height() - 10
+        screen.blit(prompt_surface, (prompt_x, prompt_y))
         txt_surface = font.render(name, True, (0, 0, 0))
         screen.blit(txt_surface, (input_box.x + 5, input_box.y + 5))
         pygame.draw.rect(screen, (0, 0, 0), input_box, 2)
@@ -214,7 +225,8 @@ def reading_comprehension_screen(screen, font, passage, user_name, trigger_port)
     trigger_sent = False
     while True:
         for event in pygame.event.get():
-            if event.type == pygame.QUIT:
+            # Exit the app if Q is pressed or window is closed.
+            if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_q):
                 pygame.quit()
                 sys.exit()
             if event.type == pygame.MOUSEBUTTONDOWN:
@@ -223,7 +235,7 @@ def reading_comprehension_screen(screen, font, passage, user_name, trigger_port)
 
         screen.fill((255, 255, 255))
         draw_user_name(screen, font, user_name)
-        display_text(screen, font, passage, start_y=50)
+        display_text(screen, font, passage, start_y=150)
         draw_button(screen, next_button_rect, "Next", font)
         pygame.display.flip()
         if not trigger_sent:
@@ -247,8 +259,8 @@ def question_screen(screen, font, question_dict, user_name, trigger_port):
     options_height = len(options) * spacing_y
 
     # Define additional gaps and submit button height
-    gap1 = 20  # gap between question and options
-    gap2 = 20  # gap between options and submit button
+    gap1 = 60  # gap between question and options
+    gap2 = 30  # gap between options and submit button
     submit_button_height = 50  # height of the submit button
 
     # Total height of the entire questions view block

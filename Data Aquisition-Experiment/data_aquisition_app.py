@@ -7,7 +7,6 @@ from tkinter.filedialog import askopenfilename
 import PyPDF2
 import serial
 import time
-import threading
 import re
 
 # Mapping for subscripts and superscripts
@@ -169,8 +168,16 @@ def select_mode_screen(screen, font):
     Ask user to choose Developer or Experiment mode.
     Returns True for experiment mode, False for developer mode.
     """
-    dev_rect = pygame.Rect(100, 300, 200, 60)
-    exp_rect = pygame.Rect(400, 300, 200, 60)
+    # Dynamically center the buttons on the screen
+    screen_width = screen.get_width()
+    screen_height = screen.get_height()
+    button_width, button_height = 200, 60
+    spacing = 50
+    total_width = button_width * 2 + spacing
+    start_x = (screen_width - total_width) // 2
+    start_y = screen_height // 2
+    dev_rect = pygame.Rect(start_x, start_y, button_width, button_height)
+    exp_rect = pygame.Rect(start_x + button_width + spacing, start_y, button_width, button_height)
     while True:
         for event in pygame.event.get():
             # Exit the app if Q is pressed or window is closed.
@@ -506,6 +513,9 @@ def main():
     pygame.init()
     screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
     pygame.display.set_caption("Reading Comprehension Quiz")
+    # Allow OS access by not grabbing input
+    pygame.event.set_grab(False)
+    pygame.mouse.set_visible(True)
     # Use a Unicode-capable font for subscripts/superscripts
     pygame.font.init()
     font_path = pygame.font.match_font("dejavusans") or pygame.font.match_font("arial") or pygame.font.get_default_font()
@@ -523,21 +533,35 @@ def main():
     experiment_mode = select_mode_screen(screen, font)
 
     if experiment_mode:
-        # wait for eye‐tracker to connect before proceeding
-        waiting = True
+        # wait up to 30s for eye-tracker
         eye = TobiiEyeTracker()
-        while waiting:
+        start_time = time.time()
+        timeout = 10
+        connected = False
+        screen_width = screen.get_width()
+        screen_height = screen.get_height()
+        while time.time() - start_time < timeout:
             if eye.connect():
-                waiting = False
-            else:
-                screen.fill((255,255,255))
-                msg = font.render("Waiting for Eye-Tracker...", True, (0,0,0))
-                x = (screen.get_width()-msg.get_width())//2
-                y = screen.get_height()//2
-                screen.blit(msg, (x,y))
-                pygame.display.flip()
-                time.sleep(1)
-        # brief pause so user sees connection success
+                connected = True
+                break
+            # draw waiting screen with progress bar
+            elapsed = time.time() - start_time
+            progress = elapsed / timeout
+            screen.fill((255,255,255))
+            msg = font.render("Waiting for Eye-Tracker...", True, (0,0,0))
+            x = (screen_width - msg.get_width())//2
+            y = screen_height//2 - 40
+            screen.blit(msg, (x, y))
+            # progress bar
+            bar_width = screen_width * 0.6
+            bar_height = 20
+            bar_x = (screen_width - bar_width)//2
+            bar_y = y + 40
+            pygame.draw.rect(screen, (0,0,0), (bar_x, bar_y, bar_width, bar_height), 2)
+            pygame.draw.rect(screen, (0,150,0), (bar_x+2, bar_y+2, (bar_width-4)*progress, bar_height-4))
+            pygame.display.flip()
+            time.sleep(0.1)
+        # brief pause after connect or timeout
         time.sleep(0.5)
 
     # 6. Ask for the user's name.
@@ -547,6 +571,7 @@ def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     user_data_dir = os.path.join(base_dir, "experiment_data", user_name)
     os.makedirs(user_data_dir, exist_ok=True)
+    import threading
     tracking_thread = threading.Thread(
         target=start_tracking,
         args=(user_data_dir, experiment_mode),
@@ -605,4 +630,5 @@ def main():
 
 
 if __name__ == "__main__":
+    # Run on main thread (required for macOS GUI), disable input grab to allow OS access
     main()

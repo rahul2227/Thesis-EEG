@@ -316,11 +316,14 @@ def question_screen(screen, font, question_dict, user_name, trigger_port):
                     y = start_y + question_height + gap1 + row * row_spacing
                     cb_rect = pygame.Rect(x, y, checkbox_size, checkbox_size)
                     if cb_rect.collidepoint(mouse_pos):
-                        selected_option = letter
-                # Frustration button click
-                if frustration_button_rect.collidepoint(mouse_pos):
+                        # Toggle selection
+                        if selected_option == letter:
+                            selected_option = None
+                        else:
+                            selected_option = letter
+                # Frustration button click (toggle only if not already flagged)
+                if frustration_button_rect.collidepoint(mouse_pos) and not frustration_flag:
                     frustration_flag = True
-                    return selected_option, frustration_flag
                 # Submit button click (only if an option selected)
                 if submit_button_rect.collidepoint(mouse_pos) and selected_option is not None:
                     return selected_option, frustration_flag
@@ -352,8 +355,11 @@ def question_screen(screen, font, question_dict, user_name, trigger_port):
             opt_surface = font.render(f"{letter}: {option_text}", True, (0, 0, 0))
             screen.blit(opt_surface, (x + checkbox_size + 10, y))
 
-        # Draw Frustration button with a dull red color on the left
-        draw_button(screen, frustration_button_rect, "Frustration", font, button_color=(200, 100, 100))
+        # Draw Frustration button: red until clicked, then gray
+        if frustration_flag:
+            draw_button(screen, frustration_button_rect, "Frustration", font, button_color=(150, 150, 150))
+        else:
+            draw_button(screen, frustration_button_rect, "Frustration", font, button_color=(200, 100, 100))
         # Draw Submit button on the right
         draw_button(screen, submit_button_rect, "Submit", font)
         pygame.display.flip()

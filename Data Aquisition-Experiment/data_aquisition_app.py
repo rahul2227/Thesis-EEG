@@ -8,6 +8,24 @@ import PyPDF2
 import serial
 import time
 import threading
+import re
+
+# Mapping for subscripts and superscripts
+_sub_map = str.maketrans("0123456789+-=()", "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎")
+_sup_map = str.maketrans("0123456789+-=()", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾")
+
+def format_math_text(text):
+    """
+    Convert plain text formulas so that digits after letters become subscripts
+    and ^n sequences become superscripts, e.g. H2O → H₂O, x^2 → x².
+    """
+    # superscripts from ^n patterns
+    text = re.sub(r"\^([0-9+\-=\(\)])",
+                  lambda m: m.group(1).translate(_sup_map), text)
+    # subscripts for digits after letters or closing parenthesis
+    text = re.sub(r"([A-Za-z\)])([0-9+\-=\(\)])",
+                  lambda m: m.group(1) + m.group(2).translate(_sub_map), text)
+    return text
 from tobiiEyeTrackerPro import TobiiEyeTracker
 
 # Trigger constants and helper function
@@ -197,6 +215,8 @@ def input_name_screen(screen, font):
 # 4b. Displaying the Reading Comprehension Passage
 # -----------------------------------------
 def display_text(screen, font, text, start_y=50, color=(0, 0, 0)):
+    # apply subscript/superscript formatting
+    text = format_math_text(text)
     words = text.split()
     lines = []
     current_line = ""
@@ -251,8 +271,9 @@ def question_screen(screen, font, question_dict, user_name, trigger_port):
     spacing_y = 50
     options = list(question_dict["options"].items())
 
-    # Render the question text once to get its height
-    question_surface = font.render(question_dict["question"], True, (0, 0, 0))
+    # format question text for math symbols
+    q_text = format_math_text(question_dict["question"])
+    question_surface = font.render(q_text, True, (0, 0, 0))
     question_height = question_surface.get_height()
 
     # Calculate total height for options block
@@ -288,7 +309,8 @@ def question_screen(screen, font, question_dict, user_name, trigger_port):
     col_centers = [screen.get_width() // 4, 3 * screen.get_width() // 4]
     col_max_widths = [0] * cols
     for idx, (letter, option_text) in enumerate(options):
-        opt_width = font.size(f"{letter}: {option_text}")[0]
+        fmt = format_math_text(option_text)
+        opt_width = font.size(f"{letter}: {fmt}")[0]
         total_opt = checkbox_size + 10 + opt_width
         col = idx % cols
         if total_opt > col_max_widths[col]:
@@ -336,7 +358,7 @@ def question_screen(screen, font, question_dict, user_name, trigger_port):
         draw_user_name(screen, font, user_name)
 
         # Render and center the question text
-        question_surface = font.render(question_dict["question"], True, (0, 0, 0))
+        question_surface = font.render(q_text, True, (0, 0, 0))
         q_x = (screen.get_width() - question_surface.get_width()) // 2
         screen.blit(question_surface, (q_x, start_y))
 
@@ -352,7 +374,8 @@ def question_screen(screen, font, question_dict, user_name, trigger_port):
             if selected_option == letter:
                 pygame.draw.line(screen, (0, 0, 0), (cb_rect.left, cb_rect.top), (cb_rect.right, cb_rect.bottom), 2)
                 pygame.draw.line(screen, (0, 0, 0), (cb_rect.left, cb_rect.bottom), (cb_rect.right, cb_rect.top), 2)
-            opt_surface = font.render(f"{letter}: {option_text}", True, (0, 0, 0))
+            fmt = format_math_text(option_text)
+            opt_surface = font.render(f"{letter}: {fmt}", True, (0, 0, 0))
             screen.blit(opt_surface, (x + checkbox_size + 10, y))
 
         # Draw Frustration button: red until clicked, then gray
@@ -389,14 +412,18 @@ def show_section_transition(screen, font, user_name, current_section, total_sect
         pygame.display.flip()
 
 
-def start_tracking():
+def start_tracking(save_dir):
+    # ensure ET_data subdirectory exists next to user CSV
+    et_dir = os.path.join(save_dir, "ET_data")
+    os.makedirs(et_dir, exist_ok=True)
+    file_path = os.path.join(et_dir, "eye_tracking_data.csv")
     eye_tracker = TobiiEyeTracker()
     eye_tracker.connect()  # TODO: make it so if you get False (meaning eyetracker is not there), exit the app
     eye_tracker.start_recording()
     interval = 1  # seconds
 
     # Open CSV file and write headers
-    with open('eye_tracking_data.csv', mode='w', newline='') as file:
+    with open(file_path, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(['Timestamp', 'Mean Pupil Area', 'Mean Fixation Duration', 'User Looking', 'Avg X', 'Avg Y'])
 
@@ -441,14 +468,16 @@ def main():
         return
 
     # 3. Start the eye-tracker in a separate thread.
-    tracking_thread = threading.Thread(target=start_tracking, daemon=True)
-    tracking_thread.start()
+    # (moved to after user name input)
 
     # 4. Now initialize Pygame.
     pygame.init()
     screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
     pygame.display.set_caption("Reading Comprehension Quiz")
-    font = pygame.font.SysFont("Arial", 24)
+    # Use a Unicode-capable font for subscripts/superscripts
+    pygame.font.init()
+    font_path = pygame.font.match_font("dejavusans") or pygame.font.match_font("arial") or pygame.font.get_default_font()
+    font = pygame.font.Font(font_path, 24)
 
     # 5. Initialize trigger port.
     try:
@@ -460,6 +489,13 @@ def main():
 
     # 6. Ask for the user's name.
     user_name = input_name_screen(screen, font)
+
+    # Create user data directory and start eye-tracking thread
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    user_data_dir = os.path.join(base_dir, "experiment_data", user_name)
+    os.makedirs(user_data_dir, exist_ok=True)
+    tracking_thread = threading.Thread(target=start_tracking, args=(user_data_dir,), daemon=True)
+    tracking_thread.start()
 
     results = []  # This list will store tuples: (Section #, Question #, Correct, User Answer, Frustration)
     total_sections = len(sections)
@@ -488,7 +524,11 @@ def main():
 
     # 9. Write results to a CSV file.
     directory = os.path.dirname(os.path.abspath(__file__))
-    csv_filename = os.path.join(directory, f"{user_name}-data.csv")
+
+    # making sure the directory exists
+    os.makedirs(os.path.join(directory, "experiment_data", f"{user_name}"), exist_ok=True)
+
+    csv_filename = os.path.join(directory, "experiment_data", f"{user_name}", f"{user_name}-data.csv")
     try:
         with open(csv_filename, mode='w', newline='', encoding='utf-8') as csv_file:
             writer = csv.writer(csv_file)

@@ -269,9 +269,31 @@ def question_screen(screen, font, question_dict, user_name, trigger_port):
     # Calculate the starting y-position to vertically center the block
     start_y = (screen.get_height() - total_height) // 2
 
-    # Set the y-position for the submit button
+    # Set the y-position for the buttons
     submit_y = start_y + question_height + gap1 + options_height + gap2
-    submit_button_rect = pygame.Rect((screen.get_width() - 100) // 2, submit_y, 100, 50)
+    # Calculate dynamic widths for "Submit" and "Frustration"
+    submit_width = 100
+    frustration_text = "Frustration"
+    frustration_width = font.size(frustration_text)[0] + 20  # padding around text
+    button_height = 50
+    spacing = 50  # space between buttons
+    total_width = frustration_width + spacing + submit_width
+    start_x = (screen.get_width() - total_width) // 2
+    # Place Frustration button on the left, Submit on the right
+    frustration_button_rect = pygame.Rect(start_x, submit_y, frustration_width, button_height)
+    submit_button_rect = pygame.Rect(start_x + frustration_width + spacing, submit_y, submit_width, button_height)
+    frustration_flag = False
+    # Precompute left-aligned column X positions
+    cols = 2
+    col_centers = [screen.get_width() // 4, 3 * screen.get_width() // 4]
+    col_max_widths = [0] * cols
+    for idx, (letter, option_text) in enumerate(options):
+        opt_width = font.size(f"{letter}: {option_text}")[0]
+        total_opt = checkbox_size + 10 + opt_width
+        col = idx % cols
+        if total_opt > col_max_widths[col]:
+            col_max_widths[col] = total_opt
+    col_start_x = [col_centers[i] - col_max_widths[i] // 2 for i in range(cols)]
 
     trigger_sent = False
     selected_option = None
@@ -285,17 +307,23 @@ def question_screen(screen, font, question_dict, user_name, trigger_port):
 
             if event.type == pygame.MOUSEBUTTONDOWN:
                 mouse_pos = event.pos
-                # Check each option's checkbox collision
+                # Check grid-based option collisions (2 columns, left-aligned)
+                row_spacing = spacing * 2
                 for idx, (letter, option_text) in enumerate(options):
-                    opt_surface = font.render(f"{letter}: {option_text}", True, (0, 0, 0))
-                    row_width = checkbox_size + 10 + opt_surface.get_width()
-                    row_x = (screen.get_width() - row_width) // 2
-                    option_y = start_y + question_height + gap1 + idx * spacing_y
-                    cb_rect = pygame.Rect(row_x, option_y, checkbox_size, checkbox_size)
+                    row = idx // cols
+                    col = idx % cols
+                    x = col_start_x[col]
+                    y = start_y + question_height + gap1 + row * row_spacing
+                    cb_rect = pygame.Rect(x, y, checkbox_size, checkbox_size)
                     if cb_rect.collidepoint(mouse_pos):
                         selected_option = letter
+                # Frustration button click
+                if frustration_button_rect.collidepoint(mouse_pos):
+                    frustration_flag = True
+                    return selected_option, frustration_flag
+                # Submit button click (only if an option selected)
                 if submit_button_rect.collidepoint(mouse_pos) and selected_option is not None:
-                    return selected_option
+                    return selected_option, frustration_flag
 
         if not trigger_sent:
             send_trigger(trigger_port, TRIGGER_THINKING)
@@ -309,19 +337,24 @@ def question_screen(screen, font, question_dict, user_name, trigger_port):
         q_x = (screen.get_width() - question_surface.get_width()) // 2
         screen.blit(question_surface, (q_x, start_y))
 
-        # Render each option, centering each row horizontally
+        # Render each option in a grid (2 columns, left-aligned)
+        row_spacing = spacing * 2
         for idx, (letter, option_text) in enumerate(options):
-            opt_surface = font.render(f"{letter}: {option_text}", True, (0, 0, 0))
-            row_width = checkbox_size + 10 + opt_surface.get_width()
-            row_x = (screen.get_width() - row_width) // 2
-            option_y = start_y + question_height + gap1 + idx * spacing_y
-            cb_rect = pygame.Rect(row_x, option_y, checkbox_size, checkbox_size)
+            row = idx // cols
+            col = idx % cols
+            x = col_start_x[col]
+            y = start_y + question_height + gap1 + row * row_spacing
+            cb_rect = pygame.Rect(x, y, checkbox_size, checkbox_size)
             pygame.draw.rect(screen, (0, 0, 0), cb_rect, 2)
             if selected_option == letter:
                 pygame.draw.line(screen, (0, 0, 0), (cb_rect.left, cb_rect.top), (cb_rect.right, cb_rect.bottom), 2)
                 pygame.draw.line(screen, (0, 0, 0), (cb_rect.left, cb_rect.bottom), (cb_rect.right, cb_rect.top), 2)
-            screen.blit(opt_surface, (cb_rect.right + 10, cb_rect.top))
+            opt_surface = font.render(f"{letter}: {option_text}", True, (0, 0, 0))
+            screen.blit(opt_surface, (x + checkbox_size + 10, y))
 
+        # Draw Frustration button with a dull red color on the left
+        draw_button(screen, frustration_button_rect, "Frustration", font, button_color=(200, 100, 100))
+        # Draw Submit button on the right
         draw_button(screen, submit_button_rect, "Submit", font)
         pygame.display.flip()
 
@@ -334,7 +367,8 @@ def show_section_transition(screen, font, user_name, current_section, total_sect
     message = f"Section {current_section} complete. Click Next for Section {current_section + 1} of {total_sections}."
     while True:
         for event in pygame.event.get():
-            if event.type == pygame.QUIT:
+            # Exit the app if Q is pressed or window is closed.
+            if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_q):
                 pygame.quit()
                 sys.exit()
             if event.type == pygame.MOUSEBUTTONDOWN:
@@ -421,7 +455,7 @@ def main():
     # 6. Ask for the user's name.
     user_name = input_name_screen(screen, font)
 
-    results = []  # This list will store tuples: (Section #, Question #, Correct, User Answer)
+    results = []  # This list will store tuples: (Section #, Question #, Correct, User Answer, Frustration)
     total_sections = len(sections)
 
     # 7. Loop through all reading comprehension sections.
@@ -430,8 +464,8 @@ def main():
         reading_comprehension_screen(screen, font, section["paragraph"], user_name, trigger_port)
         # Loop through all questions in this section.
         for q_index, question in enumerate(section["questions"]):
-            answer = question_screen(screen, font, question, user_name, trigger_port)
-            results.append((sec_index + 1, q_index + 1, question["correct"], answer))
+            answer, frustration = question_screen(screen, font, question, user_name, trigger_port)
+            results.append((sec_index + 1, q_index + 1, question["correct"], answer, frustration))
         # If not the last section, show a transition screen.
         if sec_index < total_sections - 1:
             show_section_transition(screen, font, user_name, sec_index + 1, total_sections)
@@ -452,7 +486,7 @@ def main():
     try:
         with open(csv_filename, mode='w', newline='', encoding='utf-8') as csv_file:
             writer = csv.writer(csv_file)
-            writer.writerow(["Reading comprehension number", "Question number", "Correct answer", "User chosen answer"])
+            writer.writerow(["Reading comprehension number", "Question number", "Correct answer", "User chosen answer", "Frustration"])
             for row in results:
                 writer.writerow(row)
         print(f"Results saved to {csv_filename}")

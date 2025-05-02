@@ -9,6 +9,7 @@ import serial
 import time
 import logging
 import re
+from datetime import datetime, timezone
 
 # Mapping for subscripts and superscripts
 _sub_map = str.maketrans("0123456789+-=()", "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎")
@@ -28,36 +29,37 @@ def format_math_text(text):
     return text
 from tobiiEyeTrackerPro import TobiiEyeTracker
 
-# Trigger constants and helper function
-TRIGGER_READING = 0x10
+TRIGGER_READING  = 0x10
 TRIGGER_THINKING = 0x20
-TRACKING_THREAD = False
-TRIGGER_LOG_WRITER = None   # set in main()
+TRACKING_THREAD  = False
+
+# --- synchronisation helpers ---
+EXP_START_NS   = None          # set once in main()
+TRIGGER_EVENTS = []            # [(abs_time_s, rel_time_s, label, code)]
 
 
 def send_trigger(trigger_port, trigger_code, label: str = ""):
     """
-    Send a hardware trigger and mirror it to the local CSV log.
+    Hardware trigger + in‑memory log with absolute & relative times.
 
-    Parameters
-    ----------
-    trigger_port : serial.Serial | None
-    trigger_code : int
-    label        : str   optional descriptive string
+    The relative clock is time since EXP_START_NS in seconds.
     """
-    global TRIGGER_LOG_WRITER
-    t_sec = time.time()
+    global EXP_START_NS, TRIGGER_EVENTS
+    t_ns   = time.perf_counter_ns()
+    abs_s  = t_ns / 1e9
+    rel_s  = (t_ns - EXP_START_NS) / 1e9 if EXP_START_NS else 0.0
 
+    # pulse
     if trigger_port is not None:
         try:
             trigger_port.write([trigger_code])
-            time.sleep(0.004)      # 4 ms pulse
+            time.sleep(0.004)
             trigger_port.write([0x00])
         except Exception as e:
             print("Error sending trigger:", e)
 
-    if TRIGGER_LOG_WRITER is not None:
-        TRIGGER_LOG_WRITER.writerow([t_sec, trigger_code, label])
+    # store for later CSV merge
+    TRIGGER_EVENTS.append((abs_s, rel_s, label, trigger_code))
 
 
 # -------------------------------
@@ -470,6 +472,10 @@ def start_tracking(eye_tracker, save_dir, experiment_mode):
     else:
         eye_tracker.save_dir = et_dir
     # Connect only if not already connected
+
+    if eye_tracker.exp_start_ns is None:
+        eye_tracker.set_exp_start_ns(EXP_START_NS)
+
     if eye_tracker.et is None:
         if experiment_mode:
             while not eye_tracker.connect():
@@ -623,12 +629,18 @@ def main():
     )
     logging.info("==== Session started ====")
 
-    # CSV trigger log
-    global TRIGGER_LOG_WRITER
-    trigger_log_path = os.path.join(log_dir, f"trigger_log_{time.strftime('%Y%m%d_%H%M%S')}.csv")
-    trigger_log_file = open(trigger_log_path, "w", newline="", encoding="utf-8")
-    TRIGGER_LOG_WRITER = csv.writer(trigger_log_file)
-    TRIGGER_LOG_WRITER.writerow(["timestamp_s", "code", "label"])
+
+    # Set experiment start time for high-res trigger logging
+    global EXP_START_NS
+    EXP_START_NS = time.perf_counter_ns()
+
+    # -----------------------------------------------------------------
+    # Create or reuse a single TobiiEyeTracker instance for the session
+    # -----------------------------------------------------------------
+    if eye is None:
+        eye = TobiiEyeTracker()          # dev‑mode fallback
+    # inject high‑resolution experiment start time
+    eye.set_exp_start_ns(EXP_START_NS)
 
     import threading
     tracking_thread = threading.Thread(
@@ -648,7 +660,13 @@ def main():
         # Loop through all questions in this section.
         for q_index, question in enumerate(section["questions"]):
             answer, frustration = question_screen(screen, font, question, user_name, trigger_port)
-            results.append((sec_index + 1, q_index + 1, question["correct"], answer, frustration))
+
+            submit_ns = time.perf_counter_ns()
+            abs_s = submit_ns / 1e9  # numeric seconds
+            rel_s = (submit_ns - EXP_START_NS) / 1e9
+            abs_iso = datetime.fromtimestamp(abs_s, timezone.utc).isoformat()
+
+            results.append((sec_index + 1, q_index + 1, question["correct"], answer, frustration, abs_iso, f"{rel_s:.6f}", "QuizSubmit"))
         # If not the last section, show a transition screen.
         if sec_index < total_sections - 1:
             show_section_transition(screen, font, user_name, sec_index + 1, total_sections)
@@ -663,19 +681,32 @@ def main():
     pygame.display.flip()
     pygame.time.wait(3000)
 
-    # 9. Write results to a CSV file.
+    # 9. Write results and triggers to a CSV file.
     directory = os.path.dirname(os.path.abspath(__file__))
-
-    # making sure the directory exists
     os.makedirs(os.path.join(directory, "experiment_data", f"{user_name}"), exist_ok=True)
-
     csv_filename = os.path.join(directory, "experiment_data", f"{user_name}", f"{user_name}-data.csv")
+    header = [
+              "Section", "Question",
+              "Correct", "Answer", "Frustration",
+              "abs_time_s", "rel_time_s", "Label"]
+
     try:
         with open(csv_filename, mode='w', newline='', encoding='utf-8') as csv_file:
             writer = csv.writer(csv_file)
-            writer.writerow(["Reading comprehension number", "Question number", "Correct answer", "User chosen answer", "Frustration"])
-            for row in results:
-                writer.writerow(row)
+            writer.writerow(header)
+
+            # quiz answer rows
+            for sec, qn, corr, ans, frustr in results:
+                writer.writerow(["quiz",
+                                 sec, qn,
+                                 corr, ans, frustr,
+                                 "", "", ""])
+
+            # trigger rows
+            for abs_s, rel_s, label, _code in TRIGGER_EVENTS:
+                iso = datetime.fromtimestamp(abs_s, timezone.utc).isoformat()
+                writer.writerow(["", "", "", "", "",
+                                 iso, f"{rel_s:.6f}", label])
         print(f"Results saved to {csv_filename}")
     except Exception as e:
         print("Error writing CSV file:", e)
@@ -684,13 +715,7 @@ def main():
     if trigger_port is not None:
         trigger_port.close()
 
-    # close trigger CSV & note shutdown
-    if 'trigger_log_file' in locals():
-        try:
-            trigger_log_file.flush()
-            trigger_log_file.close()
-        except Exception:
-            pass
+    # note shutdown
     logging.info("==== Session finished ====")
 
     pygame.quit()

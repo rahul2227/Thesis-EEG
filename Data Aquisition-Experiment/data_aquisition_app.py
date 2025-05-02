@@ -666,7 +666,7 @@ def main():
             rel_s = (submit_ns - EXP_START_NS) / 1e9
             abs_iso = datetime.fromtimestamp(abs_s, timezone.utc).isoformat()
 
-            results.append((sec_index + 1, q_index + 1, question["correct"], answer, frustration, abs_iso, f"{rel_s:.6f}", "QuizSubmit"))
+            results.append((sec_index + 1, q_index + 1, question["correct"], answer, frustration, abs_iso, f"{rel_s:.6f}", f"QuizSubmit_{sec_index + 1}_{q_index + 1}"))
         # If not the last section, show a transition screen.
         if sec_index < total_sections - 1:
             show_section_transition(screen, font, user_name, sec_index + 1, total_sections)
@@ -688,19 +688,20 @@ def main():
     header = [
               "Section", "Question",
               "Correct", "Answer", "Frustration",
-              "abs_time_s", "rel_time_s", "Label"]
+              "abs_time_iso", "rel_time_s", "Label"]
 
     try:
         with open(csv_filename, mode='w', newline='', encoding='utf-8') as csv_file:
             writer = csv.writer(csv_file)
             writer.writerow(header)
 
-            # quiz answer rows
-            for sec, qn, corr, ans, frustr in results:
-                writer.writerow(["quiz",
-                                 sec, qn,
-                                 corr, ans, frustr,
-                                 "", "", ""])
+            # quiz answer rows (already include absolute & relative time)
+            for sec, qn, corr, ans, frustr, abs_iso, rel_s, label in results:
+                writer.writerow([
+                    sec, qn,
+                    corr, ans, frustr,
+                    abs_iso, rel_s, label
+                ])
 
             # trigger rows
             for abs_s, rel_s, label, _code in TRIGGER_EVENTS:

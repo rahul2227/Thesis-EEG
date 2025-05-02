@@ -7,6 +7,7 @@ from tkinter.filedialog import askopenfilename
 import PyPDF2
 import serial
 import time
+import logging
 import re
 
 # Mapping for subscripts and superscripts
@@ -31,16 +32,32 @@ from tobiiEyeTrackerPro import TobiiEyeTracker
 TRIGGER_READING = 0x10
 TRIGGER_THINKING = 0x20
 TRACKING_THREAD = False
+TRIGGER_LOG_WRITER = None   # set in main()
 
 
-def send_trigger(trigger_port, trigger_code):
+def send_trigger(trigger_port, trigger_code, label: str = ""):
+    """
+    Send a hardware trigger and mirror it to the local CSV log.
+
+    Parameters
+    ----------
+    trigger_port : serial.Serial | None
+    trigger_code : int
+    label        : str   optional descriptive string
+    """
+    global TRIGGER_LOG_WRITER
+    t_sec = time.time()
+
     if trigger_port is not None:
         try:
             trigger_port.write([trigger_code])
-            time.sleep(0.01)
+            time.sleep(0.004)      # 4 ms pulse
             trigger_port.write([0x00])
         except Exception as e:
             print("Error sending trigger:", e)
+
+    if TRIGGER_LOG_WRITER is not None:
+        TRIGGER_LOG_WRITER.writerow([t_sec, trigger_code, label])
 
 
 # -------------------------------
@@ -290,7 +307,7 @@ def reading_comprehension_screen(screen, font, passage, user_name, trigger_port)
         draw_button(screen, next_button_rect, "Next", font)
         pygame.display.flip()
         if not trigger_sent:
-            send_trigger(trigger_port, TRIGGER_READING)
+            send_trigger(trigger_port, TRIGGER_READING, "ReadingStart")
             trigger_sent = True
 
 
@@ -382,7 +399,7 @@ def question_screen(screen, font, question_dict, user_name, trigger_port):
                     return selected_option, frustration_flag
 
         if not trigger_sent:
-            send_trigger(trigger_port, TRIGGER_THINKING)
+            send_trigger(trigger_port, TRIGGER_THINKING, "QuestionStart")
             trigger_sent = True
 
         screen.fill((255, 255, 255))
@@ -443,21 +460,25 @@ def show_section_transition(screen, font, user_name, current_section, total_sect
         pygame.display.flip()
 
 
-def start_tracking(save_dir, experiment_mode):
+def start_tracking(eye_tracker, save_dir, experiment_mode):
     # ensure ET_data subdirectory exists next to user CSV
     et_dir = os.path.join(save_dir, "ET_data")
     os.makedirs(et_dir, exist_ok=True)
     file_path = os.path.join(et_dir, "eye_tracking_data.csv")
-    eye_tracker = TobiiEyeTracker()
-    # Connect once in dev mode (best-effort), loop until success in experiment mode
-    if experiment_mode:
-        while not eye_tracker.connect():
-            time.sleep(1)
+    if eye_tracker is None:
+        eye_tracker = TobiiEyeTracker(et_dir)
     else:
-        try:
-            eye_tracker.connect()
-        except:
-            pass
+        eye_tracker.save_dir = et_dir
+    # Connect only if not already connected
+    if eye_tracker.et is None:
+        if experiment_mode:
+            while not eye_tracker.connect():
+                time.sleep(1)
+        else:
+            try:
+                eye_tracker.connect()
+            except Exception:
+                pass
     eye_tracker.start_recording()
     interval = 1  # seconds
 
@@ -483,6 +504,12 @@ def start_tracking(save_dir, experiment_mode):
                 avg_x,
                 avg_y
             ])
+
+        print(f"Eye Tracking data saved to {file_path}")
+
+    # --- graceful shutdown & binary export -------------------------------
+    eye_tracker.stop_recording()
+    eye_tracker.save_data_npy(et_dir)
 
 
 # ----------------------------
@@ -531,10 +558,18 @@ def main():
 
     # Mode selection
     experiment_mode = select_mode_screen(screen, font)
+    # Ensure eye variable exists even in developer mode
+    eye = None
 
     if experiment_mode:
+        # ensure ET_data subdirectory exists next to user CSV
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        save_dir = os.path.join(base_dir, "test_data")
+        et_dir = os.path.join(save_dir, "ET_data")
+        os.makedirs(et_dir, exist_ok=True)
+        file_path = os.path.join(et_dir, "eye_tracking_data.csv")
         # wait up to 30s for eye-tracker
-        eye = TobiiEyeTracker()
+        eye = TobiiEyeTracker(et_dir)
         start_time = time.time()
         timeout = 10
         connected = False
@@ -571,10 +606,34 @@ def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     user_data_dir = os.path.join(base_dir, "experiment_data", user_name)
     os.makedirs(user_data_dir, exist_ok=True)
+
+    # ---------- logs directory ----------
+    log_dir = os.path.join(user_data_dir, "logs")
+    os.makedirs(log_dir, exist_ok=True)
+
+    # human‑readable run log
+    run_log_path = os.path.join(log_dir, f"session_{time.strftime('%Y%m%d_%H%M%S')}.log")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler(run_log_path, encoding="utf-8"),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    logging.info("==== Session started ====")
+
+    # CSV trigger log
+    global TRIGGER_LOG_WRITER
+    trigger_log_path = os.path.join(log_dir, f"trigger_log_{time.strftime('%Y%m%d_%H%M%S')}.csv")
+    trigger_log_file = open(trigger_log_path, "w", newline="", encoding="utf-8")
+    TRIGGER_LOG_WRITER = csv.writer(trigger_log_file)
+    TRIGGER_LOG_WRITER.writerow(["timestamp_s", "code", "label"])
+
     import threading
     tracking_thread = threading.Thread(
         target=start_tracking,
-        args=(user_data_dir, experiment_mode),
+        args=(eye, user_data_dir, experiment_mode),
         daemon=True
     )
     tracking_thread.start()
@@ -624,9 +683,20 @@ def main():
     # 10. Close trigger port and quit.
     if trigger_port is not None:
         trigger_port.close()
+
+    # close trigger CSV & note shutdown
+    if 'trigger_log_file' in locals():
+        try:
+            trigger_log_file.flush()
+            trigger_log_file.close()
+        except Exception:
+            pass
+    logging.info("==== Session finished ====")
+
     pygame.quit()
     global TRACKING_THREAD
     TRACKING_THREAD = True
+    tracking_thread.join()   # wait for the tracking thread to write .npy files
 
 
 if __name__ == "__main__":

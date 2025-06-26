@@ -5,6 +5,12 @@
       <excludeFolder url="file://$MODULE_DIR$/ASR/task1 - NR" />
       <excludeFolder url="file://$MODULE_DIR$/ASR/task2 - TSR" />
       <excludeFolder url="file://$MODULE_DIR$/osfstorage-archive" />
+      <excludeFolder url="file://$MODULE_DIR$/Data Aquisition-Experiment/experiment_data" />
+      <excludeFolder url="file://$MODULE_DIR$/Data Processing(Acquired)/Visualisations" />
+      <excludeFolder url="file://$MODULE_DIR$/Data Processing(Acquired)/derivatives" />
+      <excludeFolder url="file://$MODULE_DIR$/Data Processing(Acquired)/experiment_data" />
+      <excludeFolder url="file://$MODULE_DIR$/Data Processing(Acquired)/figures" />
+      <excludeFolder url="file://$MODULE_DIR$/Data/osfstorage-archive" />
     </content>
     <orderEntry type="jdk" jdkName="thesis-ml" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />

@@ -10,8 +10,7 @@ Features:
   of the latest epoch data (similar to the plot_3dSurface_and_heatmap style)
 - 3D scalp topography visualization (via a separate function)
 
-Author: Your Name
-Date: YYYY-MM-DD
+Author: Rahul Sharma
 """
 
 import os
